@@ -37,7 +37,7 @@ loaded_vectorstores = setup_and_load_faiss()
 
 user_query = st.text_area("INSERT CLINICAL QUERY:", placeholder="e.g., What is the main treatment used to treat AFib in patients with stage 3 kidney disease?")
 
-if st.button("Jana Jawapan", type="primary"):
+if st.button("Generate Answer", type="primary"):
     if not user_query.strip():
         st.warning("PLEASE INSERT CLINICAL QUERY FIRST.")
     else:
