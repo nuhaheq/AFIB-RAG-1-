@@ -1,5 +1,7 @@
 import os
 import zipfile
+from datetime import datetime
+import pandas as pd
 import streamlit as st
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -10,6 +12,11 @@ st.title("Retrieval Augmented Generation-Based Clinical Decision Support System 
 
 TOP_K_PER_STORE = 5   # calon per guideline SEBELUM re-rank global
 TOP_N_CONTEXT = 5      # bilangan chunk akhir yang dihantar ke LLM
+
+# Log Q&A dalam sesi ni — hilang bila page refresh/session tamat, jadi
+# download CSV SEBELUM tutup tab kalau nak simpan.
+if "qa_log" not in st.session_state:
+    st.session_state.qa_log = []
 
 
 @st.cache_resource
@@ -167,12 +174,35 @@ ANSWER:
                 st.subheader("OFFICIAL CLINICAL ANSWER")
                 st.markdown(response.text)
 
-                with st.expander("📋 Untuk RAGAS: copy untuk paste ke eval_vignettes CSV"):
-                    st.caption("Copy blok di bawah terus ke lajur `retrieved_contexts` dalam CSV (chunk diasingkan dengan `||`).")
-                    joined_contexts = " || ".join(doc.page_content for doc in top_docs)
-                    st.text_area("retrieved_contexts", value=joined_contexts, height=150, label_visibility="collapsed")
-                    st.caption("Jawapan RAG penuh (untuk lajur `rag_response`):")
-                    st.text_area("rag_response", value=response.text, height=150, label_visibility="collapsed")
+                # Simpan rekod ke log sesi (untuk RAGAS / analisis kemudian)
+                st.session_state.qa_log.append({
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "question": user_query,
+                    "rag_response": response.text,
+                    "retrieved_contexts": " || ".join(doc.page_content for doc in top_docs),
+                    "ground_truth": "",  # isi manual kemudian dalam Excel/CSV
+                })
 
             except Exception as e:
                 st.error(f"Ralat berlaku: {str(e)}")
+
+# ==================================================
+# Log Q&A Sesi Ini (untuk RAGAS / dataset penyelidikan)
+# ==================================================
+if st.session_state.qa_log:
+    st.divider()
+    st.subheader(f"📊 Log Soalan & Jawapan Sesi Ini ({len(st.session_state.qa_log)} rekod)")
+    df_log = pd.DataFrame(st.session_state.qa_log)
+    st.dataframe(df_log, use_container_width=True)
+
+    csv_bytes = df_log.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Download Log sebagai CSV (eval_vignettes.csv)",
+        data=csv_bytes,
+        file_name="eval_vignettes.csv",
+        mime="text/csv",
+    )
+    st.caption(
+        "Lajur `ground_truth` kosong — isi jawapan rujukan anda dalam Excel "
+        "selepas download, sebelum upload ke Colab untuk RAGAS scoring."
+    )
