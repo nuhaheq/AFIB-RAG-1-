@@ -165,28 +165,55 @@ USER QUERY: {user_query}
 ANSWER:
 """
 
-                api_key = st.secrets["GEMINI_API_KEY"]
+                # Semak API Key
+                api_key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+                if not api_key:
+                    st.error("API Key tidak ditemui. Sila tetapkan GEMINI_API_KEY dalam Streamlit Secrets.")
+                    st.stop()
+
                 client = genai.Client(api_key=api_key)
-                response = client.models.generate_content(
-                    model='gemini-3.1-flash-lite',
-                    contents=system_prompt
-                )
 
-                st.subheader("OFFICIAL CLINICAL ANSWER")
-                st.markdown(response.text)
+                # Panggilan API berserta Retry Logic jika server 503 (High Demand)
+                TARGET_MODEL = 'gemini-2.5-flash'
+                answer_text = None
+                max_retries = 3
 
-                # Simpan rekod ke log sesi (untuk RAGAS / analisis kemudian)
-                st.session_state.qa_log.append({
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "question": user_query,
-                    "rag_response": response.text,
-                    "retrieved_contexts": " || ".join(doc.page_content for doc in top_docs),
-                    "ground_truth": "",  # isi manual kemudian dalam Excel/CSV
-                })
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        response = client.models.generate_content(
+                            model=TARGET_MODEL,
+                            contents=system_prompt
+                        )
+                        answer_text = response.text
+                        st.caption(f"🤖 Jawapan dijana menggunakan model: `{TARGET_MODEL}`")
+                        break
+                    except Exception as err:
+                        err_str = str(err)
+                        if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str.lower():
+                            if attempt < max_retries:
+                                st.warning(f"Server Gemini sibuk (503). Mencuba semula... ({attempt}/{max_retries})")
+                                time.sleep(attempt * 2)
+                            else:
+                                st.error(f"Gagal memanggil {TARGET_MODEL} selepas {max_retries} percubaan. Pelayan sibuk.")
+                        else:
+                            st.error(f"Ralat semasa memanggil Gemini: {err_str}")
+                            break
+
+                if answer_text:
+                    st.subheader("OFFICIAL CLINICAL ANSWER")
+                    st.markdown(answer_text)
+
+                    # Simpan rekod ke log sesi
+                    st.session_state.qa_log.append({
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "question": user_query,
+                        "rag_response": answer_text,
+                        "retrieved_contexts": " || ".join(doc.page_content for doc in top_docs),
+                        "ground_truth": "",
+                    })
 
             except Exception as e:
                 st.error(f"Ralat berlaku: {str(e)}")
-
 # ==================================================
 # Log Q&A Sesi Ini (untuk RAGAS / dataset penyelidikan)
 # ==================================================
