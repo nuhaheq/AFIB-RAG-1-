@@ -173,51 +173,44 @@ ANSWER:
 
                 client = genai.Client(api_key=api_key)
 
-                # Panggilan API berserta Retry Logic jika server 503 (High Demand)
+                # Senarai model keutamaan (Jika 3.6 sibuk, dia auto bertukar ke 3.5-flash-lite/2.5-flash)
                 candidate_models = [
                     'gemini-3.6-flash',
                     'gemini-3.5-flash-lite',
                     'gemini-2.5-flash'
                 ]
+
                 answer_text = None
-                max_retries = 3
+                last_error = None
 
-                for attempt in range(1, max_retries + 1):
-                    try:
-                        response = client.models.generate_content(
-                            model=candidate_models,
-                            contents=system_prompt
-                        )
-                        answer_text = response.text
-                        st.caption(f"🤖 Jawapan dijana menggunakan model: `{TARGET_MODEL}`")
-                        break
-                    except Exception as err:
-                        err_str = str(err)
-                        if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str.lower():
-                            if attempt < max_retries:
-                                st.warning(f"Server Gemini sibuk (503). Mencuba semula... ({attempt}/{max_retries})")
-                                time.sleep(attempt * 2)
-                            else:
-                                st.error(f"Gagal memanggil {TARGET_MODEL} selepas {max_retries} percubaan. Pelayan sibuk.")
-                        else:
-                            st.error(f"Ralat semasa memanggil Gemini: {err_str}")
+                for model_name in candidate_models:
+                    if answer_text:
+                        break  # Berjaya, keluar loop
+                    
+                    max_retries = 3
+                    for attempt in range(1, max_retries + 1):
+                        try:
+                            response = client.models.generate_content(
+                                model=model_name,
+                                contents=system_prompt
+                            )
+                            answer_text = response.text
+                            st.caption(f"🤖 Jawapan berjaya dijana menggunakan model: `{model_name}`")
                             break
+                        except Exception as err:
+                            last_error = err
+                            err_str = str(err)
+                            if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str.lower():
+                                if attempt < max_retries:
+                                    st.warning(f"Server {model_name} sibuk (503). Mencuba semula... ({attempt}/{max_retries})")
+                                    time.sleep(attempt * 4)  # Tunggu 4s, 8s, 12s...
+                                else:
+                                    st.info(f"Model {model_name} masih sibuk, beralih ke model alternatif...")
+                            else:
+                                break  # Ralat lain, tukar model terus
 
-                if answer_text:
-                    st.subheader("OFFICIAL CLINICAL ANSWER")
-                    st.markdown(answer_text)
-
-                    # Simpan rekod ke log sesi
-                    st.session_state.qa_log.append({
-                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "question": user_query,
-                        "rag_response": answer_text,
-                        "retrieved_contexts": " || ".join(doc.page_content for doc in top_docs),
-                        "ground_truth": "",
-                    })
-
-            except Exception as e:
-                st.error(f"Ralat berlaku: {str(e)}")
+                if not answer_text:
+                    st.error(f"Gagal memanggil semua model Gemini. Pelayan sibuk. Ralat terakhir: {last_error}")
 # ==================================================
 # Log Q&A Sesi Ini (untuk RAGAS / dataset penyelidikan)
 # ==================================================
