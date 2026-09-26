@@ -174,7 +174,11 @@ ANSWER:
                 client = genai.Client(api_key=api_key)
 
                 # Panggilan API berserta Retry Logic jika server 503 (High Demand)
-                TARGET_MODEL = 'gemini-3.6-flash'
+                candidate_models = [
+                    'gemini-3.6-flash',
+                    'gemini-3.5-flash-lite',
+                    'gemini-2.5-flash'
+                ]
                 answer_text = None
                 max_retries = 3
 
