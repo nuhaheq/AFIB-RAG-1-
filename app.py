@@ -185,7 +185,7 @@ ANSWER:
                 for attempt in range(1, max_retries + 1):
                     try:
                         response = client.models.generate_content(
-                            model=TARGET_MODEL,
+                            model=candidate_models,
                             contents=system_prompt
                         )
                         answer_text = response.text
