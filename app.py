@@ -173,11 +173,10 @@ ANSWER:
 
                 client = genai.Client(api_key=api_key)
 
-                # Senarai model keutamaan (Jika 3.6 sibuk, dia auto bertukar ke 3.5-flash-lite/2.5-flash)
+                # Senarai model ID rasmi yang sah & aktif
                 candidate_models = [
-                    'gemini-3.6-flash',
-                    'gemini-3.5-flash-lite',
-                    'gemini-2.5-flash'
+                    'gemini-2.5-flash',
+                    'gemini-2.5-flash-lite'
                 ]
 
                 answer_text = None
@@ -211,6 +210,7 @@ ANSWER:
 
                 if not answer_text:
                     st.error(f"Gagal memanggil semua model Gemini. Pelayan sibuk. Ralat terakhir: {last_error}")
+
 # ==================================================
 # Log Q&A Sesi Ini (untuk RAGAS / dataset penyelidikan)
 # ==================================================
