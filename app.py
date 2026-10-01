@@ -1,12 +1,17 @@
 import os
 import zipfile
+import time
 from datetime import datetime
 import pandas as pd
 import streamlit as st
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
 from google import genai
-import time
+from langchain_community.vectorstores import FAISS
+
+# Import fleksibel untuk HuggingFaceEmbeddings
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
 
 st.set_page_config(page_title="AFib Clinical Decision Support", layout="wide")
 st.title("Retrieval Augmented Generation-Based Clinical Decision Support System for Anticoagulation in Atrial Fibrillation")
@@ -14,23 +19,22 @@ st.title("Retrieval Augmented Generation-Based Clinical Decision Support System 
 TOP_K_PER_STORE = 5   # calon per guideline SEBELUM re-rank global
 TOP_N_CONTEXT = 5      # bilangan chunk akhir yang dihantar ke LLM
 
-# Log Q&A dalam sesi ni — hilang bila page refresh/session tamat, jadi
-# download CSV SEBELUM tutup tab kalau nak simpan.
 if "qa_log" not in st.session_state:
     st.session_state.qa_log = []
 
 
 @st.cache_resource
 def setup_and_load_faiss():
-    """Ekstrak semua fail ZIP FAISS dan load setiap vectorstore."""
+    """Ekstrak fail ZIP (jika ada) DAN imbas semua folder terus untuk cari index.faiss."""
     zip_files = [f for f in os.listdir('.') if f.endswith('.zip')]
-    extract_dirs = []
     for z_file in zip_files:
         folder_name = z_file.replace('.zip', '').split(' ')[0]
         if not os.path.exists(folder_name):
-            with zipfile.ZipFile(z_file, 'r') as zip_ref:
-                zip_ref.extractall(folder_name)
-        extract_dirs.append(folder_name)
+            try:
+                with zipfile.ZipFile(z_file, 'r') as zip_ref:
+                    zip_ref.extractall(folder_name)
+            except Exception as e:
+                st.warning(f"Gagal ekstrak {z_file}: {e}")
 
     embedding_model = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-mpnet-base-v2",
@@ -38,21 +42,18 @@ def setup_and_load_faiss():
     )
 
     vectorstores = []
-    for folder in ['.'] + extract_dirs:
-        for root, _, filenames in os.walk(folder):
-            if "index.faiss" in filenames:
+    for root, dirs, filenames in os.walk('.'):
+        if "index.faiss" in filenames:
+            try:
                 db = FAISS.load_local(root, embedding_model, allow_dangerous_deserialization=True)
                 vectorstores.append(db)
+            except Exception as e:
+                st.warning(f"Gagal load FAISS dari {root}: {str(e)}")
+
     return vectorstores
 
 
 def get_guideline_name(metadata: dict) -> str:
-    """
-    Ambil nama guideline dari metadata chunk.
-    Cuba beberapa nama key yang berkemungkinan digunakan oleh pipeline chunking anda.
-    Kalau citation dalam jawapan sentiasa keluar sebagai 'Guideline' (generik),
-    buka expander 'Debug' di bawah untuk lihat nama key sebenar dan tambah di sini.
-    """
     for key in ("source_guideline", "source", "guideline", "guideline_id"):
         value = metadata.get(key)
         if value:
@@ -68,10 +69,12 @@ def get_section_name(metadata: dict) -> str:
     return "General"
 
 
+# Load vectorstore
 loaded_vectorstores = setup_and_load_faiss()
 
 if not loaded_vectorstores:
-    st.error("Tiada FAISS vectorstore berjaya dimuatkan. Semak fail ZIP dalam repo ini.")
+    st.error("Tiada FAISS vectorstore berjaya dimuatkan. Semak fail ZIP atau folder FAISS dalam repo ini.")
+    st.stop()
 
 user_query = st.text_area(
     "INSERT CLINICAL QUERY:",
@@ -84,19 +87,16 @@ if st.button("Generate Answer", type="primary"):
     else:
         with st.spinner("SEARCHING GUIDELINES AND GENERATING ANSWER..."):
             try:
-                # 1. Kumpul calon dari SEMUA vectorstore berserta skor jarak.
-                #    FAISS default guna L2 distance -> skor lebih RENDAH = lebih relevan.
+                # 1. Kumpul calon dari SEMUA vectorstore berserta skor jarak
                 scored_candidates = []
                 for db in loaded_vectorstores:
                     results = db.similarity_search_with_score(user_query, k=TOP_K_PER_STORE)
                     scored_candidates.extend(results)
 
-                # 2. Susun SEMUA calon secara global ikut skor (paling relevan dahulu).
-                #    Sebelum ni, kod ambil top-3 setiap store lalu potong ke 5 tanpa
-                #    re-rank -> chunk paling relevan dari store lewat boleh terbuang.
+                # 2. Susun secara global (skor lebih rendah = lebih relevan)
                 scored_candidates.sort(key=lambda pair: pair[1])
 
-                # 3. Buang duplicate content, KEKALKAN urutan relevance.
+                # 3. Buang duplicate content, kekalkan urutan
                 seen = set()
                 ranked_unique_docs = []
                 for doc, score in scored_candidates:
@@ -173,7 +173,7 @@ ANSWER:
 
                 client = genai.Client(api_key=api_key)
 
-                # Senarai model ID rasmi yang sah & aktif
+                # Senarai model keutamaan (ID rasmi yang sah & aktif)
                 candidate_models = [
                     'gemini-2.5-flash',
                     'gemini-2.5-flash-lite'
@@ -184,7 +184,7 @@ ANSWER:
 
                 for model_name in candidate_models:
                     if answer_text:
-                        break  # Berjaya, keluar loop
+                        break
                     
                     max_retries = 3
                     for attempt in range(1, max_retries + 1):
@@ -206,14 +206,27 @@ ANSWER:
                                 else:
                                     st.info(f"Model {model_name} masih sibuk, beralih ke model alternatif...")
                             else:
-                                break  # Ralat lain, tukar model terus
+                                break
 
                 if not answer_text:
                     st.error(f"Gagal memanggil semua model Gemini. Pelayan sibuk. Ralat terakhir: {last_error}")
+                else:
+                    st.subheader("OFFICIAL CLINICAL ANSWER")
+                    st.markdown(answer_text)
 
-# ==================================================
-# Log Q&A Sesi Ini (untuk RAGAS / dataset penyelidikan)
-# ==================================================
+                    # Simpan rekod ke log sesi
+                    st.session_state.qa_log.append({
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "question": user_query,
+                        "rag_response": answer_text,
+                        "retrieved_contexts": " || ".join(doc.page_content for doc in top_docs),
+                        "ground_truth": "",
+                    })
+
+            except Exception as e:
+                st.error(f"Ralat berlaku: {str(e)}")
+
+# Log Q&A Sesi Ini (untuk RAGAS / dataset)
 if st.session_state.qa_log:
     st.divider()
     st.subheader(f"📊 Log Soalan & Jawapan Sesi Ini ({len(st.session_state.qa_log)} rekod)")
@@ -229,5 +242,5 @@ if st.session_state.qa_log:
     )
     st.caption(
         "Lajur `ground_truth` kosong — isi jawapan rujukan anda dalam Excel "
-        "selepas download, sebelum upload ke Colab untuk RAGAS scoring."
+        "selepas download, sebelum upload ke RAGAS scoring."
     )
