@@ -175,8 +175,8 @@ ANSWER:
 
                 # Senarai model keutamaan (ID rasmi yang sah & aktif)
                 candidate_models = [
-                    'gemini-2.5-flash',
-                    'gemini-2.5-flash-lite'
+                    'gemini-3.5-flash',
+                    'gemini-3.5-flash-lite'
                 ]
 
                 answer_text = None
